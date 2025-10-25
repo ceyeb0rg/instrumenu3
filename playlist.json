@@ -1,0 +1,26 @@
+[
+  {
+    "file": "audio/track1.wav",
+    "title": "Sunny Loop",
+    "bpm": 120,
+    "mood": "happy",
+    "instruments": ["piano","strings","bass"],
+    "time_signature": "4/4"
+  },
+  {
+    "file": "audio/track2.wav",
+    "title": "Slow Waltz",
+    "bpm": 72,
+    "mood": "romantic",
+    "instruments": ["acoustic guitar","violin"],
+    "time_signature": "3/4"
+  },
+  {
+    "file": "audio/track3.wav",
+    "title": "Uplift",
+    "bpm": 135,
+    "mood": "electronic",
+    "instruments": ["synth","drums"],
+    "time_signature": "4/4"
+  }
+]

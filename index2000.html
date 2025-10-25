@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Custom WAV Playlist Player</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.4;margin:18px;background:#f7f8fa;color:#111}
+  .player {max-width:980px;margin:0 auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;padding:18px;box-shadow:0 6px 18px rgba(20,30,40,0.06)}
+  h1{margin:0 0 12px;font-size:20px}
+  .controls{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+  button{padding:8px 12px;border-radius:6px;border:1px solid #d0d6db;background:#fff;cursor:pointer}
+  button.primary{background:#111;color:#fff;border:1px solid rgba(0,0,0,0.15)}
+  .progress{flex:1;height:10px;background:#eee;border-radius:6px;position:relative;cursor:pointer;display:flex;align-items:center}
+  .progress .filled{height:100%;background:#b6d4ff;border-radius:6px;width:0}
+  .time{width:92px;text-align:right;font-size:13px;color:#555;margin-left:8px}
+  .playlist{margin-top:12px;border-top:1px solid #eee;padding-top:12px}
+  .row{display:flex;align-items:center;gap:10px;padding:10px;border-radius:6px;border:1px solid transparent}
+  .row:hover{background:#fbfdff}
+  .row.playing{background:#eef6ff;border-color:#d3e8ff}
+  .title{flex:1;display:flex;flex-direction:column}
+  .meta{font-size:13px;color:#555;display:flex;gap:8px;align-items:center}
+  .star{cursor:pointer;font-size:18px;user-select:none}
+  .buy{padding:6px 8px}
+  .badge{font-size:12px;padding:2px 6px;border-radius:6px;background:#f0f0f0;color:#333;border:1px solid #e3e3e3}
+  .arrow{cursor:pointer;user-select:none}
+  .extra{font-size:13px;color:#444;margin-top:6px;display:none}
+  .filters{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .filter-block{display:flex;flex-direction:column;gap:6px}
+  select,input[type=range],input[type=text]{padding:6px;border-radius:6px;border:1px solid #d8dee6}
+  .sort{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .small{font-size:12px;color:#666}
+  .fav-filter{margin-left:6px}
+  .cart-count{background:#111;color:#fff;padding:2px 6px;border-radius:10px;font-size:12px;margin-left:6px}
+  .controls-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+</style>
+</head>
+<body>
+<div class="player" id="player">
+  <h1>WAV Playlist Player</h1>
+  <div class="controls-row">
+    <div class="controls" style="min-width:320px;">
+      <button id="prevBtn" title="Previous">⏮</button>
+      <button id="playBtn" class="primary" title="Play/Pause">▶ Play</button>
+      <button id="nextBtn" title="Next">⏭</button>
+      <div style="width:16px"></div>
+      <div class="progress" id="progress">
+        <div class="filled" id="progressFilled"></div>
+      </div>
+      <div class="time" id="timeDisplay">00:00 / 00:00</div>
+    </div>
+
+    <div class="sort">
+      <label class="small">Sort by</label>
+      <select id="sortSelect">
+        <option value="index">Default</option>
+        <option value="bpm">BPM (asc)</option>
+        <option value="bpm_desc">BPM (desc)</option>
+        <option value="mood">Mood (A→Z)</option>
+        <option value="instrument">Main instrument (A→Z)</option>
+        <option value="time_3first">Time signature (3/4 first)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="filters">
+    <div class="filter-block">
+      <label class="small">Filter 1 (type)</label>
+      <select id="filter1Type">
+        <option value="none">None</option>
+        <option value="bpm">BPM</option>
+        <option value="instruments">Instruments</option>
+        <option value="mood">Mood</option>
+        <option value="time_signature">Time signature (3/4)</option>
+      </select>
+    </div>
+
+    <div class="filter-block" id="filter1Control">
+      <!-- dynamic control goes here -->
+    </div>
+
+    <div class="filter-block">
+      <label class="small">Filter 2 (type)</label>
+      <select id="filter2Type">
+        <option value="none">None</option>
+        <option value="bpm">BPM</option>
+        <option value="instruments">Instruments</option>
+        <option value="mood">Mood</option>
+        <option value="time_signature">Time signature (3/4)</option>
+      </select>
+    </div>
+
+    <div class="filter-block" id="filter2Control">
+      <!-- dynamic control goes here -->
+    </div>
+
+    <div style="margin-left:auto;display:flex;align-items:center">
+      <label class="small">Show only favorites</label>
+      <input type="checkbox" id="onlyFavs" class="fav-filter" />
+      <button id="clearFilters" title="Clear filters" style="margin-left:12px">Clear</button>
+      <button id="viewCart" style="margin-left:12px">Cart <span id="cartCount" class="cart-count">0</span></button>
+    </div>
+  </div>
+
+  <div class="playlist" id="playlist"></div>
+
+  <!-- hidden audio element -->
+  <audio id="audio" preload="metadata"></audio>
+</div>
+
+<script>
+(async function(){
+  // Config
+  const BPM_MARGIN = 15; // loose margin ±15 for bpm filter
+  const playlistPath = './playlist.json'; // update if different path
+
+  // DOM refs
+  const audio = document.getElementById('audio');
+  const playBtn = document.getElementById('playBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const progress = document.getElementById('progress');
+  const progressFilled = document.getElementById('progressFilled');
+  const timeDisplay = document.getElementById('timeDisplay');
+  const playlistEl = document.getElementById('playlist');
+  const sortSelect = document.getElementById('sortSelect');
+  const filter1Type = document.getElementById('filter1Type');
+  const filter2Type = document.getElementById('filter2Type');
+  const filter1Control = document.getElementById('filter1Control');
+  const filter2Control = document.getElementById('filter2Control');
+  const onlyFavs = document.getElementById('onlyFavs');
+  const clearFilters = document.getElementById('clearFilters');
+  const cartCountEl = document.getElementById('cartCount');
+  const viewCart = document.getElementById('viewCart');
+
+  // State
+  let rawPlaylist = [];
+  let playlist = []; // filtered + sorted view
+  let currentIndex = 0;
+  let playing = false;
+  let favorites = new Set(JSON.parse(localStorage.getItem('music_favs')||'[]'));
+  let cart = JSON.parse(localStorage.getItem('music_cart')||'[]');
+  updateCartCount();
+  // helpers
+  function timeFmt(sec){
+    if (!isFinite(sec)) return '00:00';
+    sec = Math.floor(sec);
+    const m = Math.floor(sec/60).toString().padStart(2,'0');
+    const s = (sec%60).toString().padStart(2,'0');
+    return `${m}:${s}`;
+  }
+
+  // Load playlist JSON
+  try {
+    const res = await fetch(playlistPath);
+    if (!res.ok) throw new Error('Could not load playlist.json: ' + res.status);
+    rawPlaylist = await res.json();
+    // ensure each item has expected fields; set default instrument
+    rawPlaylist = rawPlaylist.map((it, idx) => ({
+      index: idx,
+      file: it.file,
+      title: it.title || it.file,
+      bpm: Number(it.bpm) || null,
+      mood: it.mood || '',
+      instruments: Array.isArray(it.instruments) ? it.instruments : (it.instruments? [it.instruments] : []),
+      time_signature: it.time_signature || '',
+      // will be filled once audio metadata loaded (duration)
+      duration: null
+    }));
+  } catch(err){
+    playlistEl.innerHTML = `<div style="color:red">Error loading playlist.json — ${err.message}</div>`;
+    console.error(err);
+    return;
+  }
+
+  // Preload durations (optional — fetches metadata)
+  await Promise.all(rawPlaylist.map((item, i) => new Promise(res=>{
+    const a = new Audio();
+    a.preload = 'metadata';
+    a.src = item.file;
+    const tidy = ()=>{ a.src=''; a.remove(); res(); };
+    a.addEventListener('loadedmetadata', ()=>{
+      item.duration = a.duration;
+      tidy();
+    });
+    a.addEventListener('error', ()=>{ item.duration = NaN; tidy(); });
+  })));
+
+  // UI: dynamic filter controls
+  function controlFor(type, targetEl){
+    targetEl.innerHTML = '';
+    if(type==='none') return;
+    if(type==='bpm'){
+      // slider range 40..240 (adjust if you need)
+      const wrapper = document.createElement('div');
+      wrapper.style.display='flex';wrapper.style.gap='8px';wrapper.style.alignItems='center';
+      const input = document.createElement('input');
+      input.type='range'; input.min=40; input.max=240; input.value=120;
+      input.id = 'bpmSlider_'+Math.random().toString(36).slice(2);
+      const label = document.createElement('div'); label.className='small'; label.textContent=`BPM: ${input.value}  (±${BPM_MARGIN})`;
+      input.addEventListener('input', ()=>label.textContent=`BPM: ${input.value}  (±${BPM_MARGIN})`);
+      input.addEventListener('change', ()=>{ applyFiltersAndRender(); });
+      wrapper.appendChild(input); wrapper.appendChild(label);
+      targetEl.appendChild(wrapper);
+    } else if(type==='instruments'){
+      // multi-select derived from data
+      const instruments = Array.from(new Set(rawPlaylist.flatMap(p=>p.instruments))).sort();
+      const sel = document.createElement('select');
+      sel.multiple = false;
+      sel.size = Math.min(6, instruments.length||1);
+      sel.style.minWidth='140px';
+      const anyOpt = document.createElement('option'); anyOpt.value=''; anyOpt.textContent='— choose instrument —'; sel.appendChild(anyOpt);
+      instruments.forEach(ins=>{ const o=document.createElement('option'); o.value=ins; o.textContent=ins; sel.appendChild(o);});
+      sel.addEventListener('change', ()=>applyFiltersAndRender());
+      targetEl.appendChild(sel);
+    } else if(type==='mood'){
+      const moods = Array.from(new Set(rawPlaylist.map(p=>p.mood).filter(Boolean))).sort();
+      const sel = document.createElement('select');
+      sel.style.minWidth='140px';
+      const anyOpt = document.createElement('option'); anyOpt.value=''; anyOpt.textContent='— choose mood —'; sel.appendChild(anyOpt);
+      moods.forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=m; sel.appendChild(o);});
+      sel.addEventListener('change', ()=>applyFiltersAndRender());
+      targetEl.appendChild(sel);
+    } else if(type==='time_signature'){
+      const wrapper = document.createElement('div');
+      const sel = document.createElement('select');
+      const anyOpt = document.createElement('option'); anyOpt.value=''; anyOpt.textContent='— choose —'; sel.appendChild(anyOpt);
+      const only3 = document.createElement('option'); only3.value='3/4'; only3.textContent='3/4 only'; sel.appendChild(only3);
+      const not3 = document.createElement('option'); not3.value='not3'; not3.textContent='Not 3/4'; sel.appendChild(not3);
+      sel.addEventListener('change', ()=>applyFiltersAndRender());
+      wrapper.appendChild(sel);
+      targetEl.appendChild(wrapper);
+    }
+  }
+
+  // initialize both filter control panels
+  controlFor(filter1Type.value, filter1Control);
+  controlFor(filter2Type.value, filter2Control);
+
+  filter1Type.addEventListener('change', ()=>{ controlFor(filter1Type.value, filter1Control); });
+  filter2Type.addEventListener('change', ()=>{ controlFor(filter2Type.value, filter2Control); });
+
+  clearFilters.addEventListener('click', ()=>{
+    filter1Type.value='none';
+    filter2Type.value='none';
+    controlFor('none', filter1Control);
+    controlFor('none', filter2Control);
+    onlyFavs.checked = false;
+    sortSelect.value = 'index';
+    applyFiltersAndRender();
+  });
+
+  // apply filters and sort then render
+  function applyFiltersAndRender(){
+    // start with rawPlaylist copy
+    playlist = rawPlaylist.slice();
+
+    // helper to read controls
+    function readControl(type, controlEl){
+      if(type==='none') return null;
+      if(type==='bpm'){
+        const r = controlEl.querySelector('input[type=range]');
+        return r ? Number(r.value) : null;
+      }
+      if(type==='instruments'){
+        const sel = controlEl.querySelector('select');
+        return sel ? (sel.value || null) : null;
+      }
+      if(type==='mood'){
+        const sel = controlEl.querySelector('select');
+        return sel ? (sel.value || null) : null;
+      }
+      if(type==='time_signature'){
+        const sel = controlEl.querySelector('select');
+        return sel ? (sel.value || null) : null;
+      }
+      return null;
+    }
+
+    const f1 = {type: filter1Type.value, val: readControl(filter1Type.value, filter1Control)};
+    const f2 = {type: filter2Type.value, val: readControl(filter2Type.value, filter2Control)};
+
+    // apply function for one filter
+    function applyOne(list, filter){
+      if(!filter.type || filter.type==='none' || filter.val==null || filter.val==='') return list;
+      if(filter.type==='bpm'){
+        const target = Number(filter.val);
+        const lo = target - BPM_MARGIN, hi = target + BPM_MARGIN;
+        return list.filter(it => it.bpm!=null && it.bpm >= lo && it.bpm <= hi);
+      }
+      if(filter.type==='instruments'){
+        const val = filter.val;
+        return list.filter(it => it.instruments && it.instruments.includes(val));
+      }
+      if(filter.type==='mood'){
+        const val = filter.val;
+        return list.filter(it => it.mood && it.mood.toLowerCase() === val.toLowerCase());
+      }
+      if(filter.type==='time_signature'){
+        if(filter.val === '3/4') return list.filter(it => it.time_signature && it.time_signature.includes('3/4'));
+        if(filter.val === 'not3') return list.filter(it => !(it.time_signature && it.time_signature.includes('3/4')));
+        return list;
+      }
+      return list;
+    }
+
+    playlist = applyOne(playlist, f1);
+    playlist = applyOne(playlist, f2);
+
+    if(onlyFavs.checked){
+      playlist = playlist.filter(p => favorites.has(p.file));
+    }
+
+    // sort
+    const sort = sortSelect.value;
+    if(sort==='bpm') playlist.sort((a,b)=> (a.bpm||0) - (b.bpm||0));
+    else if(sort==='bpm_desc') playlist.sort((a,b)=> (b.bpm||0) - (a.bpm||0));
+    else if(sort==='mood') playlist.sort((a,b)=> (a.mood||'').localeCompare(b.mood||''));
+    else if(sort==='instrument') playlist.sort((a,b)=> ((a.instruments[0]||'').localeCompare(b.instruments[0]||'')));
+    else if(sort==='time_3first') playlist.sort((a,b)=> {
+      const a3 = (a.time_signature||'').includes('3/4') ? 0 : 1;
+      const b3 = (b.time_signature||'').includes('3/4') ? 0 : 1;
+      return a3 - b3;
+    });
+    // default (index) preserve original order
+    renderPlaylist();
+  }
+
+  function renderPlaylist(){
+    playlistEl.innerHTML = '';
+    if(!playlist.length){
+      playlistEl.innerHTML = '<div class="small">No tracks match the filters.</div>';
+      return;
+    }
+    playlist.forEach((item, idx) => {
+      const r = document.createElement('div');
+      r.className = 'row';
+      if(playlistIndexToGlobal(idx) === currentIndex) r.classList.add('playing');
+
+      // star
+      const star = document.createElement('div');
+      star.className = 'star';
+      star.innerHTML = favorites.has(item.file) ? '★' : '☆';
+      star.title = 'Toggle favorite';
+      star.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        if(favorites.has(item.file)) favorites.delete(item.file); else favorites.add(item.file);
+        localStorage.setItem('music_favs', JSON.stringify(Array.from(favorites)));
+        renderPlaylist();
+      });
+
+      // main info
+      const titleWrap = document.createElement('div');
+      titleWrap.className='title';
+      const titleLine = document.createElement('div');
+      titleLine.style.display='flex'; titleLine.style.alignItems='center'; titleLine.style.gap='8px';
+      const title = document.createElement('div');
+      title.innerHTML = `<strong>${escapeHtml(item.title)}</strong>`;
+      const mainInstr = document.createElement('div');
+      mainInstr.className='small';
+      mainInstr.textContent = item.instruments[0] ? `${item.instruments[0]} +` : 'unknown +';
+      const bpm = document.createElement('div'); bpm.className='small'; bpm.textContent = item.bpm ? `${item.bpm} bpm` : '';
+      const mood = document.createElement('div'); mood.className='small'; mood.textContent = item.mood || '';
+      const timeBadge = document.createElement('div'); timeBadge.className='badge'; if((item.time_signature||'').includes('3/4')) timeBadge.textContent='3/4';
+
+      titleLine.appendChild(title); titleLine.appendChild(mainInstr); titleLine.appendChild(bpm); titleLine.appendChild(mood);
+      if(timeBadge.textContent) titleLine.appendChild(timeBadge);
+
+      const metaLine = document.createElement('div');
+      metaLine.className = 'meta';
+      const arrow = document.createElement('div'); arrow.className='arrow'; arrow.textContent='▸'; arrow.title='Show more';
+      arrow.style.marginRight='6px';
+      metaLine.appendChild(arrow);
+
+      const extras = document.createElement('div'); extras.className='extra';
+      extras.textContent = 'Other instruments: ' + (item.instruments.slice(1).join(', ') || 'none') + (item.duration ? (' • ' + timeFmt(item.duration)) : '');
+      titleWrap.appendChild(titleLine);
+      titleWrap.appendChild(metaLine);
+      titleWrap.appendChild(extras);
+
+      // buy button
+      const buy = document.createElement('button'); buy.className='buy'; buy.textContent='Buy';
+      buy.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        cart.push({file: item.file, title: item.title, price: 0 /* placeholder */});
+        localStorage.setItem('music_cart', JSON.stringify(cart));
+        updateCartCount();
+        buy.textContent = 'Added';
+        setTimeout(()=>{ buy.textContent='Buy'; }, 900);
+      });
+
+      // click row to select/play
+      r.addEventListener('click', ()=>{
+        currentIndex = playlistIndexToGlobal(idx);
+        loadAndPlay(currentIndex);
+        renderPlaylist();
+      });
+
+      // arrow toggle
+      arrow.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        const open = extras.style.display !== 'none';
+        extras.style.display = open ? 'none' : 'block';
+        arrow.textContent = open ? '▸' : '▾';
+      });
+
+      r.appendChild(star);
+      r.appendChild(titleWrap);
+      r.appendChild(buy);
+      playlistEl.appendChild(r);
+    });
+  }
+
+  function escapeHtml(text){ return (text+'').replace(/[&<>"']/g, (m)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+
+  // mapping from playlist view index to original rawPlaylist index
+  function playlistIndexToGlobal(viewIdx){
+    const item = playlist[viewIdx];
+    return item ? item.index : 0;
+  }
+
+  // load track by rawPlaylist index
+  function loadTrackByGlobalIndex(gIdx){
+    const it = rawPlaylist[gIdx];
+    if(!it) return;
+    audio.src = it.file;
+    audio.load();
+    // update play UI
+    highlightPlayingRow();
+  }
+
+  function highlightPlayingRow(){
+    // update row classes to show playing
+    Array.from(playlistEl.querySelectorAll('.row')).forEach((r, idx)=>{
+      const gIdx = playlistIndexToGlobal(idx);
+      if(gIdx === currentIndex) r.classList.add('playing'); else r.classList.remove('playing');
+    });
+  }
+
+  // load & play given global index
+  function loadAndPlay(gIdx){
+    loadTrackByGlobalIndex(gIdx);
+    audio.play().then(()=>{ playing=true; playBtn.textContent='⏸ Pause'; }).catch((e)=>{ console.warn(e); playBtn.textContent='▶ Play'; });
+    highlightPlayingRow();
+  }
+
+  // audio events
+  audio.addEventListener('loadedmetadata', ()=>{
+    updateTimeDisplay();
+  });
+  audio.addEventListener('timeupdate', ()=>{
+    const pct = (audio.currentTime / audio.duration) || 0;
+    progressFilled.style.width = (pct*100)+'%';
+    updateTimeDisplay();
+  });
+  audio.addEventListener('ended', ()=>{
+    // auto-next
+    nextTrack();
+  });
+
+  function updateTimeDisplay(){
+    timeDisplay.textContent = `${timeFmt(audio.currentTime)} / ${timeFmt(audio.duration)}`;
+  }
+
+  // clickable progress bar (seek)
+  progress.addEventListener('click', (e)=>{
+    const rect = progress.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    if(isFinite(audio.duration)) audio.currentTime = pct * audio.duration;
+  });
+
+  // play/pause
+  playBtn.addEventListener('click', ()=>{
+    if(!audio.src){
+      // if nothing loaded, load first visible
+      if(playlist.length) { currentIndex = playlistIndexToGlobal(0); loadAndPlay(currentIndex); }
+      return;
+    }
+    if(audio.paused){ audio.play(); playing=true; playBtn.textContent='⏸ Pause'; }
+    else { audio.pause(); playing=false; playBtn.textContent='▶ Play'; }
+  });
+
+  prevBtn.addEventListener('click', ()=>{
+    prevTrack();
+  });
+  nextBtn.addEventListener('click', ()=>{
+    nextTrack();
+  });
+
+  function prevTrack(){
+    // find index of current in rawPlaylist, move to previous item in the current filtered+sorted view
+    // if current not in view, set to first
+    const viewIdx = playlist.findIndex(it => it.index === currentIndex);
+    if(viewIdx === -1){
+      if(playlist.length) { currentIndex = playlist[0].index; loadAndPlay(currentIndex); }
+    } else {
+      const prevView = (viewIdx - 1 + playlist.length) % playlist.length;
+      currentIndex = playlist[prevView].index;
+      loadAndPlay(currentIndex);
+    }
+    renderPlaylist();
+  }
+  function nextTrack(){
+    if(!playlist.length) return;
+    const viewIdx = playlist.findIndex(it => it.index === currentIndex);
+    if(viewIdx === -1){
+      currentIndex = playlist[0].index;
+    } else {
+      const nextView = (viewIdx + 1) % playlist.length;
+      currentIndex = playlist[nextView].index;
+    }
+    loadAndPlay(currentIndex);
+    renderPlaylist();
+  }
+
+  // update on sort/filter change
+  sortSelect.addEventListener('change', applyFiltersAndRender);
+  onlyFavs.addEventListener('change', applyFiltersAndRender);
+
+  // cart
+  function updateCartCount(){
+    cartCountEl.textContent = (cart && cart.length) ? cart.length : 0;
+  }
+  viewCart.addEventListener('click', ()=>{
+    // simple cart viewer for now
+    const c = JSON.parse(localStorage.getItem('music_cart')||'[]');
+    if(!c.length) return alert('Cart is empty — when you click Buy it will be added here.');
+    const names = c.map(x => x.title + ' (' + x.file + ')').join('\\n');
+    alert('Cart items:\\n\\n' + names + '\\n\\n(You will implement the cart page separately.)');
+  });
+
+  // initial render
+  applyFiltersAndRender();
+
+  // load first track but don't autoplay
+  if(rawPlaylist.length){
+    currentIndex = rawPlaylist[0].index;
+    loadTrackByGlobalIndex(currentIndex);
+    playBtn.textContent = '▶ Play';
+  }
+
+})();
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
